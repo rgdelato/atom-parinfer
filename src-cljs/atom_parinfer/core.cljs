@@ -1,7 +1,7 @@
 (ns atom-parinfer.core
   (:require
     [atom-parinfer.util :refer [always-nil by-id js-log lines-diff log
-                                one? qs remove-el! split-lines]]
+                                one? qs remove-el! split-lines safe-subtract]]
     [clojure.string :refer [join trim]]
     [clojure.walk :refer [keywordize-keys]]
     [goog.array :as garray]
@@ -290,7 +290,7 @@
           idx
           (recur (inc idx)))))))
 
-(defn- apply-parinfer* [editor mode]
+(defn- apply-parinfer* [editor mode cursor-dx]
   (let [current-txt (.getText editor)
         lines (split-lines current-txt)
         ;; add a newline at the end of the file if there is not one
@@ -306,6 +306,7 @@
         end-row (find-end-row lines (aget cursor "row"))
         js-opts (js-obj "cursorLine" (- (aget cursor "row") start-row)
                         "cursorX" (aget cursor "column")
+                        "cursorDx" cursor-dx
                         "previewCursorScope" (true? (:preview-cursor-scope? config))
                         "forceBalance" (true? (:force-balance? config)))
         lines-to-infer (subvec lines start-row end-row)
@@ -338,14 +339,17 @@
       (set-status-bar-warning!)
       (clear-status-bar-warning!))))
 
-(defn- apply-parinfer! [_cursor-change-info]
-  (let [editor (js/atom.workspace.getActiveTextEditor)]
+(defn- apply-parinfer! [change]
+  (let [editor (js/atom.workspace.getActiveTextEditor)
+        old-range-x (some-> change .-oldRange .-end .-column)
+        new-range-x (some-> change .-newRange .-end .-column)
+        cursor-dx (safe-subtract new-range-x old-range-x)]
     (when (and editor
                (aget editor "id")
                (not (is-autocomplete-showing?)))
       (condp = (get @editor-states (aget editor "id"))
-        :indent-mode (apply-parinfer* editor :indent-mode)
-        :paren-mode  (apply-parinfer* editor :paren-mode)
+        :indent-mode (apply-parinfer* editor :indent-mode cursor-dx)
+        :paren-mode  (apply-parinfer* editor :paren-mode cursor-dx)
         nil))))
 
 ;; NOTE: 20ms seems to work well for the debounce interval.
@@ -387,13 +391,20 @@
   "Runs when an editor is opened."
   [editor]
   (let [editor-id (aget editor "id")
+        buffer (.getBuffer editor)
         init-parinfer? (file-has-watched-extension? (.getPath editor))
         current-file (.getTitle editor)]
     ;; add this editor state to our atom
     (swap! editor-states assoc editor-id :disabled)
 
     ;; listen to editor change events
-    (.onDidChangeSelectionRange editor debounced-apply-parinfer)
+    (.onDidChangeText buffer
+      (fn [event]
+        (.forEach (.-changes event)
+          ;; onDidChangeText is already batched, using apply-parinfer! directly
+          #(apply-parinfer! %))))
+
+    (.onDidChangeCursorPosition editor debounced-apply-parinfer)
 
     ;; add the destroy event
     (.onDidDestroy editor goodbye-editor)

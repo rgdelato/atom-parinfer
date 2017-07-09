@@ -67,3 +67,6 @@
   (= 1 x))
 
 (def always-nil (constantly nil))
+
+(def safe-subtract
+  (fnil - 0 0))
