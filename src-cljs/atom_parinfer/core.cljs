@@ -399,10 +399,11 @@
 
     ;; listen to editor change events
     (.onDidChangeText buffer
-      (fn [event]
-        (.forEach (.-changes event)
-          ;; onDidChangeText is already batched, using apply-parinfer! directly
-          #(apply-parinfer! %))))
+      #(let [changes (.-changes %)
+             change  (first changes)] ;; TODO: handle multiple changes/cursors?
+         (when change
+           ;; onDidChangeText is already batched, using apply-parinfer! directly
+           (apply-parinfer! change))))
 
     (.onDidChangeCursorPosition editor debounced-apply-parinfer)
 
