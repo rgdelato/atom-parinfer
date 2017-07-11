@@ -290,7 +290,16 @@
           idx
           (recur (inc idx)))))))
 
-(defn- apply-parinfer* [editor mode cursor-dx]
+(defn- changes->js-opt [changes start-row]
+  (when (seq changes)
+    (.map changes #(js-obj "lineNo"  (safe-subtract
+                                       (some-> % .-newRange .-start .-row)
+                                       start-row)
+                           "x"       (some-> % .-newRange .-start .-column)
+                           "oldText" (some-> % .-oldText)
+                           "newText" (some-> % .-newText)))))
+
+(defn- apply-parinfer* [editor mode changes]
   (let [current-txt (.getText editor)
         lines (split-lines current-txt)
         ;; add a newline at the end of the file if there is not one
@@ -306,7 +315,7 @@
         end-row (find-end-row lines (aget cursor "row"))
         js-opts (js-obj "cursorLine" (- (aget cursor "row") start-row)
                         "cursorX" (aget cursor "column")
-                        "cursorDx" cursor-dx
+                        "changes" (changes->js-opt changes start-row)
                         "previewCursorScope" (true? (:preview-cursor-scope? config))
                         "forceBalance" (true? (:force-balance? config)))
         lines-to-infer (subvec lines start-row end-row)
@@ -339,17 +348,14 @@
       (set-status-bar-warning!)
       (clear-status-bar-warning!))))
 
-(defn- apply-parinfer! [change]
-  (let [editor (js/atom.workspace.getActiveTextEditor)
-        old-range-x (some-> change .-oldRange .-end .-column)
-        new-range-x (some-> change .-newRange .-end .-column)
-        cursor-dx (safe-subtract new-range-x old-range-x)]
+(defn- apply-parinfer! [changes]
+  (let [editor (js/atom.workspace.getActiveTextEditor)]
     (when (and editor
                (aget editor "id")
                (not (is-autocomplete-showing?)))
       (condp = (get @editor-states (aget editor "id"))
-        :indent-mode (apply-parinfer* editor :indent-mode cursor-dx)
-        :paren-mode  (apply-parinfer* editor :paren-mode cursor-dx)
+        :indent-mode (apply-parinfer* editor :indent-mode changes)
+        :paren-mode  (apply-parinfer* editor :paren-mode changes)
         nil))))
 
 ;; NOTE: 20ms seems to work well for the debounce interval.
@@ -398,14 +404,9 @@
     (swap! editor-states assoc editor-id :disabled)
 
     ;; listen to editor change events
-    (.onDidChangeText buffer
-      #(let [changes (.-changes %)
-             change  (first changes)] ;; TODO: handle multiple changes/cursors?
-         (when change
-           ;; onDidChangeText is already batched, using apply-parinfer! directly
-           (apply-parinfer! change))))
+    (.onDidChangeText buffer #(apply-parinfer! (.-changes %)))
 
-    (.onDidChangeCursorPosition editor debounced-apply-parinfer)
+    (.onDidChangeCursorPosition editor #(debounced-apply-parinfer))
 
     ;; add the destroy event
     (.onDidDestroy editor goodbye-editor)
