@@ -291,13 +291,14 @@
           (recur (inc idx)))))))
 
 (defn- changes->js-opt [changes start-row]
-  (when (seq changes)
-    (.map changes #(js-obj "lineNo"  (safe-subtract
-                                       (some-> % .-newRange .-start .-row)
-                                       start-row)
-                           "x"       (some-> % .-newRange .-start .-column)
-                           "oldText" (some-> % .-oldText)
-                           "newText" (some-> % .-newText)))))
+  (when changes
+    (amap changes i ret (let [% (aget changes i)]
+                          (js-obj "lineNo"  (safe-subtract
+                                              (some-> % .-newRange .-start .-row)
+                                              start-row)
+                                  "x"       (some-> % .-newRange .-start .-column)
+                                  "oldText" (some-> % .-oldText)
+                                  "newText" (some-> % .-newText))))))
 
 (defn- apply-parinfer* [editor mode changes]
   (let [current-txt (.getText editor)
